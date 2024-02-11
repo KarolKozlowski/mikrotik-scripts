@@ -5,6 +5,8 @@
 :local fqdn;
 :local create true;
 
+# :log info ("dhcp script");
+
 :set zone "np.dotnot.pl";
 
 /ip dns static;
