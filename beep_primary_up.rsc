@@ -1,3 +1,5 @@
+#!rsc by RouterOS
+
 :local length 250ms;
 
 # supress warnings between midnight and 8:00

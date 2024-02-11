@@ -1,3 +1,5 @@
+#!rsc by RouterOS
+
 # Manage DNS records for DHCP leases
 
 # configure dns zone:

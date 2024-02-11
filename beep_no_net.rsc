@@ -1,3 +1,5 @@
+#!rsc by RouterOS
+
 :local length 25ms;
 
 :for j from=1 to=4 step=1 do {

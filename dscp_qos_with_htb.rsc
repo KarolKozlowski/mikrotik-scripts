@@ -1,3 +1,5 @@
+#!rsc by RouterOS
+
 # interface name to configure queue on
 :local queueInterfaceName "uplink-eth"
 
