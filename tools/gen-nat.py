@@ -32,6 +32,9 @@ DEFAULT_GATEWAY_IP = os.environ.get('MIKROTIK_GATEWAY_IP', None)
 # Leave empty string for no application name in comments
 DEFAULT_APP = os.environ.get('MIKROTIK_APP', '')
 
+# Default input interface list (can be overridden with --in-interface-list)
+DEFAULT_IN_INTERFACE_LIST = os.environ.get('MIKROTIK_IN_INTERFACE_LIST', 'WAN')
+
 # Generate hairpin NAT rules (can be disabled with --no-hairpin)
 GENERATE_HAIRPIN_RULES = True
 
@@ -94,6 +97,7 @@ def generate_nat_rules(
     gateway_ip: str = None,
     generate_hairpin: bool = True,
     app: str = '',
+    in_interface_list: str = 'WAN',
 ) -> str:
     """
     Generate NAT rules for MikroTik.
@@ -105,6 +109,7 @@ def generate_nat_rules(
         gateway_ip: Gateway IP for src-nat (defaults to first octet of dest_ip network)
         generate_hairpin: Whether to generate hairpin NAT rules
         app: Application name for comments (optional)
+        in_interface_list: Input interface list for public NAT rules
 
     Returns:
         RouterOS script with NAT rules
@@ -119,16 +124,16 @@ def generate_nat_rules(
     for port_spec, protocol in ports:
         # Format port spec for display
         port_display = port_spec.replace('-', '-')
-        
+
         # Build comment with app name if provided
         app_prefix = f"{app}: " if app else ""
-        dstnat_comment = f"{app_prefix}dstnat {dest_ip}:{port_display}/{protocol}"
-        hairpin_dstnat_comment = f"{app_prefix}hairpin dstnat {dest_ip}:{port_display}/{protocol}"
-        hairpin_srcnat_comment = f"{app_prefix}hairpin srcnat {dest_ip}:{port_display}/{protocol}"
+        dstnat_comment = f"{app_prefix}dstnat {port_display}/{protocol}"
+        hairpin_dstnat_comment = f"{app_prefix}hairpin dstnat {port_display}/{protocol}"
+        hairpin_srcnat_comment = f"{app_prefix}hairpin srcnat {port_display}/{protocol}"
 
         # dst-nat rule (public to internal)
         rules.append(f"/ip firewall nat add chain=dstnat action=dst-nat protocol={protocol} \\")
-        rules.append(f"  dst-address={public_ip} dst-port={port_spec} \\")
+        rules.append(f"  in-interface-list={in_interface_list} dst-port={port_spec} \\")
         rules.append(f"  to-addresses={dest_ip} to-ports={port_spec} \\")
         rules.append(f"  comment=\"{dstnat_comment}\"")
         rules.append("")
@@ -162,10 +167,11 @@ Examples:
   %(prog)s --public-ip 195.136.68.11 --dest-ip 172.16.1.10 --ports 80/tcp,443/tcp --gateway-ip 172.16.1.1
 
 Environment Variables:
-  MIKROTIK_PUBLIC_IP   - Set default public IP
-  MIKROTIK_DEST_IP     - Set default destination IP
-  MIKROTIK_GATEWAY_IP  - Set default gateway IP
-  MIKROTIK_APP         - Set default application name
+  MIKROTIK_PUBLIC_IP        - Set default public IP
+  MIKROTIK_DEST_IP          - Set default destination IP
+  MIKROTIK_GATEWAY_IP       - Set default gateway IP
+  MIKROTIK_APP              - Set default application name
+  MIKROTIK_IN_INTERFACE_LIST - Set default input interface list (default: WAN)
         """
     )
 
@@ -200,6 +206,11 @@ Environment Variables:
         default=DEFAULT_APP,
         help='Application name to include in comments' + (f' (default: {DEFAULT_APP})' if DEFAULT_APP else '')
     )
+    parser.add_argument(
+        '--in-interface-list',
+        default=DEFAULT_IN_INTERFACE_LIST,
+        help='Input interface list for public NAT rules' + (f' (default: {DEFAULT_IN_INTERFACE_LIST})' if DEFAULT_IN_INTERFACE_LIST else '')
+    )
 
     args = parser.parse_args()
 
@@ -226,7 +237,8 @@ Environment Variables:
         ports,
         args.gateway_ip,
         generate_hairpin=not args.no_hairpin,
-        app=args.app
+        app=args.app,
+        in_interface_list=args.in_interface_list
     )
 
     print(rules)
