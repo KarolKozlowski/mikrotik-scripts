@@ -12,7 +12,7 @@ Example:
 import argparse
 import os
 import sys
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # ============================================================================
 # CONFIGURATION - Edit these defaults to match your environment
@@ -94,7 +94,7 @@ def generate_nat_rules(
     public_ip: str,
     dest_ip: str,
     ports: List[Tuple[str, str]],
-    gateway_ip: str = None,
+    gateway_ip: Optional[str] = None,
     generate_hairpin: bool = True,
     app: str = '',
     in_interface_list: str = 'WAN',
