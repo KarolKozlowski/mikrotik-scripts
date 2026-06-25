@@ -53,25 +53,42 @@
 
         :if ($"g-leaseBound" = "1") do={
 
-            if ([/ip dns static find name=$fqdn] != "") do={
-
-                :log info ("DNS A record for " . $fqdn . " already exists, removing old record");
-
-                /ip dns static remove [find name=$fqdn];
-
+            # Remove old DHCP-managed record for this FQDN
+            :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
+            :if ([:len $recByName] > 0) do={
+                :log info ("DNS A record for " . $fqdn . " already exists (DHCP), removing old record");
+                /ip dns static remove $recByName;
             }
 
             :log info ("Creating DNS A record for " . $fqdn . " -> " . $"g-leaseActIP");
-            /ip dns static remove [find address=$"g-leaseActIP"];
-            /ip dns static add name=$fqdn address=$"g-leaseActIP" comment=("DHCP lease for " . $"g-leaseActMAC") disabled=no;
+
+            # Remove old DHCP-managed record for this IP
+            :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
+            :if ([:len $recByAddr] > 0) do={
+                /ip dns static remove $recByAddr;
+            }
+
+            :local nowDate [/system clock get date];
+            :local nowTime [/system clock get time];
+            :local dnsComment ("DHCP lease for " . $"g-leaseActMAC" . " @ " . $nowDate . " " . $nowTime);
+
+            # Now always add fresh DHCP record
+            /ip dns static add name=$fqdn address=$"g-leaseActIP" \
+                comment=$dnsComment disabled=no;
 
         } else={
 
             :log info ("Removing DNS A record for " . $fqdn);
 
-            /ip dns static remove [find name=$fqdn];
-            /ip dns static remove [find address=$"g-leaseActIP"];
+            :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
+            :if ([:len $recByName] > 0) do={
+                /ip dns static remove $recByName;
+            }
 
+            :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
+            :if ([:len $recByAddr] > 0) do={
+                /ip dns static remove $recByAddr;
+            }
         }
     }
 }

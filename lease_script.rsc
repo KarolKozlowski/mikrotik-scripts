@@ -27,42 +27,87 @@
 :local fqdn;
 :set fqdn ($"g-leaseHostname" . "." . $"g-zone");
 
-:if ($"g-leaseHostname" = "" ) do={
+:log info ("DHCP-DNS: event bound=" . $"g-leaseBound" . \
+           " host=" . $"g-leaseHostname" . \
+           " fqdn=" . $fqdn . \
+           " ip=" . $"g-leaseActIP" . \
+           " mac=" . $"g-leaseActMAC" . \
+           " server=" . $"g-leaseServerName");
 
-    :log info ("Client " . $lease . " did not provide a hostname");
+:if ($"g-leaseHostname" = "") do={
+
+    :log warning ("DHCP-DNS: client with IP " . $"g-leaseActIP" . \
+                  " MAC " . $"g-leaseActMAC" . " did not provide a hostname");
 
 } else={
 
-    if ([/ip dns static find name=$fqdn comment~"DHCP lease for"] != "") do={
-        :log info ("DNS A record for " . $fqdn . " is managed by DHCP.");
+    :local dhcpManaged [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
+    :if ([:len $dhcpManaged] > 0) do={
+        :log info ("DHCP-DNS: existing DHCP-managed DNS record found for " . $fqdn);
     }
 
-    if ([/ip dns static find name=$fqdn comment="manual"] != "") do={
-        :log info ("DNS A record for " . $fqdn . " is manually managed, skipping");
+    :local manualManaged [/ip dns static find where name=$fqdn and comment="manual"];
+    :if ([:len $manualManaged] > 0) do={
+        :log warning ("DHCP-DNS: DNS record for " . $fqdn . " is manually managed, skipping");
 
-    }  else {
+    } else={
 
         :if ($"g-leaseBound" = "1") do={
 
-            if ([/ip dns static find name=$fqdn] != "") do={
+            :log info ("DHCP-DNS: processing BOUND event for " . $fqdn);
 
-                :log info ("DNS A record for " . $fqdn . " already exists, removing old record");
-
-                /ip dns static remove [find name=$fqdn];
-
+            # Remove old DHCP-managed record for this FQDN
+            :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
+            :if ([:len $recByName] > 0) do={
+                :log info ("DHCP-DNS: removing old DHCP DNS record by name for " . $fqdn);
+                /ip dns static remove $recByName;
+            } else={
+                :log info ("DHCP-DNS: no old DHCP DNS record by name for " . $fqdn);
             }
 
-            :log info ("Creating DNS A record for " . $fqdn . " -> " . $"g-leaseActIP");
-            /ip dns static remove [find address=$"g-leaseActIP"];
-            /ip dns static add name=$fqdn address=$"g-leaseActIP" comment=("DHCP lease for " . $"g-leaseActMAC") disabled=no;
+            # Remove old DHCP-managed record for this IP
+            :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
+            :if ([:len $recByAddr] > 0) do={
+                :log info ("DHCP-DNS: removing old DHCP DNS record by address for " . $"g-leaseActIP");
+                /ip dns static remove $recByAddr;
+            } else={
+                :log info ("DHCP-DNS: no old DHCP DNS record by address for " . $"g-leaseActIP");
+            }
+
+            :local nowDate [/system clock get date];
+            :local nowTime [/system clock get time];
+            :local dnsComment ("DHCP lease for " . $"g-leaseActMAC" . " @ " . $nowDate . " " . $nowTime);
+
+            :log info ("DHCP-DNS: creating DNS record " . $fqdn . \
+                      " -> " . $"g-leaseActIP" . \
+                      " comment=\"" . $dnsComment . "\"");
+
+            /ip dns static add name=$fqdn address=$"g-leaseActIP" \
+                comment=$dnsComment disabled=no;
+
+            :log info ("DHCP-DNS: created DNS record for " . $fqdn);
 
         } else={
 
-            :log info ("Removing DNS A record for " . $fqdn);
+            :log info ("DHCP-DNS: processing UNBOUND event for " . $fqdn);
 
-            /ip dns static remove [find name=$fqdn];
-            /ip dns static remove [find address=$"g-leaseActIP"];
+            :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
+            :if ([:len $recByName] > 0) do={
+                :log info ("DHCP-DNS: removing DHCP DNS record by name for " . $fqdn);
+                /ip dns static remove $recByName;
+            } else={
+                :log info ("DHCP-DNS: no DHCP DNS record by name to remove for " . $fqdn);
+            }
 
+            :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
+            :if ([:len $recByAddr] > 0) do={
+                :log info ("DHCP-DNS: removing DHCP DNS record by address for " . $"g-leaseActIP");
+                /ip dns static remove $recByAddr;
+            } else={
+                :log info ("DHCP-DNS: no DHCP DNS record by address to remove for " . $"g-leaseActIP");
+            }
+
+            :log info ("DHCP-DNS: finished removing DNS record(s) for " . $fqdn);
         }
     }
 }
