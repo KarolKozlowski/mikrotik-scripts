@@ -51,6 +51,18 @@
     # Enable primary route in main by comment
     /ip route enable [/ip route find comment="PRIMARY"];
 
+    # Flush conntrack on restore so VPN/NAT sessions re-establish on primary
+    :local restoreConns [/ip firewall connection find];
+    :if ([:len $restoreConns] > 0) do={
+        :foreach conn in=$restoreConns do={
+            :do {
+                /ip firewall connection remove $conn;
+            } on-error={
+                :log debug "primary_failover_decider: restore conn $conn already gone, skipping";
+            };
+        };
+    }
+
     :set gotifyState $primaryState;
     /system script run gotify;
 
