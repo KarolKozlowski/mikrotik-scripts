@@ -1,5 +1,21 @@
 # mikrotik-scripts
 
+## init_defaults.rsc
+
+Boot-time defaults for the scripts in this repository.
+
+Use this when you want stable defaults for shared variables without repeating them in each script:
+
+- `gotifySource`
+- `gotifyService`
+- `primaryConsecutiveDownThreshold`
+- `primaryConsecutiveDownCount`
+- `warnhc`
+- `warnkuma`
+- `warninet`
+
+The companion file [init_defaults.md](init_defaults.md) explains the startup scheduler pattern and which values are intentionally left runtime-only.
+
 ## add_vlan_network.rsc
 
 Reusable RouterOS script for provisioning VLAN network components with idempotent checks.
