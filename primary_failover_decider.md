@@ -29,6 +29,16 @@ The script expects these global variables to exist at runtime:
 :global gotifyState;
 ```
 
+RouterOS globals are not persistent across reboot, so the usual pattern is to set long-lived defaults from a startup scheduler and let Netwatch provide the per-event state:
+
+```routeros
+/system scheduler add name=primary-failover-init start-time=startup on-event="\
+:global primaryConsecutiveDownThreshold 3;\
+:global primaryAppliedState;\
+:global primaryConsecutiveDownCount 0;\
+"
+```
+
 If you use that pattern, Netwatch only needs to set `primaryState` before calling the script.
 
 Typical Netwatch usage:
