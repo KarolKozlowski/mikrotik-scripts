@@ -33,13 +33,17 @@ Typical Netwatch usage:
 
 ```routeros
 # DOWN script
+:log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
 :global primaryState "DOWN";
 /system script run primary_failover_decider;
 
 # UP script
+:log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
 :global primaryState "UP";
 /system script run primary_failover_decider;
 ```
+
+For ICMP Netwatch checks, the telemetry fields above are the useful ones to log. The exact values available depend on probe type, but `rtt-avg`, `rtt-min`, `rtt-max`, and `packet-loss` are the main ones for path quality debugging.
 
 ## Requirements
 

@@ -5,6 +5,8 @@
 :global gotifyService "BestGo";
 :global gotifyState;
 
+:log info ("primary_failover_decider telemetry: state=" . $primaryState . " applied=" . $primaryAppliedState);
+
 # If we already applied this state, skip
 :if ([:typeof $primaryAppliedState] != "nil") do={
     :if ($primaryAppliedState = $primaryState) do={
@@ -24,18 +26,23 @@
 
     # Remove only connections using primary (via-bestgo)
     :local conns [/ip firewall connection find where connection-mark=via-bestgo];
+    :log info ("primary_failover_decider telemetry: failover_conntrack_marked=" . [:len $conns]);
     :if ([:len $conns] > 0) do={
+        :local removedCount 0;
         :foreach conn in=$conns do={
             :do {
                 /ip firewall connection remove $conn;
+                :set removedCount ($removedCount + 1);
             } on-error={
                 :log debug "primary_failover_decider: connection $conn already gone, skipping";
             };
         };
+        :log info ("primary_failover_decider telemetry: failover_conntrack_removed=" . $removedCount);
     }
 
     :set gotifyState $primaryState;
     :delay 1000ms;
+    :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
     /system script run gotify;
 
     :set primaryAppliedState "DOWN";
@@ -53,17 +60,22 @@
 
     # Flush conntrack on restore so VPN/NAT sessions re-establish on primary
     :local restoreConns [/ip firewall connection find];
+    :log info ("primary_failover_decider telemetry: restore_conntrack_total=" . [:len $restoreConns]);
     :if ([:len $restoreConns] > 0) do={
+        :local restoreRemovedCount 0;
         :foreach conn in=$restoreConns do={
             :do {
                 /ip firewall connection remove $conn;
+                :set restoreRemovedCount ($restoreRemovedCount + 1);
             } on-error={
                 :log debug "primary_failover_decider: restore conn $conn already gone, skipping";
             };
         };
+        :log info ("primary_failover_decider telemetry: restore_conntrack_removed=" . $restoreRemovedCount);
     }
 
     :set gotifyState $primaryState;
+    :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
     /system script run gotify;
 
     :set primaryAppliedState "UP";
