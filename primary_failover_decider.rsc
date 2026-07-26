@@ -4,6 +4,16 @@
 :global gotifySource "np.dotnot.pl";
 :global gotifyService "BestGo";
 :global gotifyState;
+:global primaryConsecutiveDownCount;
+:global primaryConsecutiveDownThreshold;
+
+:if ([:typeof $primaryConsecutiveDownCount] = "nil") do={
+    :set primaryConsecutiveDownCount 0;
+};
+
+:if ([:typeof $primaryConsecutiveDownThreshold] = "nil") do={
+    :set primaryConsecutiveDownThreshold 2;
+};
 
 :log info ("primary_failover_decider telemetry: state=" . $primaryState . " applied=" . $primaryAppliedState);
 
@@ -16,6 +26,14 @@
 };
 
 :if ($primaryState = "DOWN") do={
+
+    :set primaryConsecutiveDownCount ($primaryConsecutiveDownCount + 1);
+    :log info ("primary_failover_decider telemetry: down_streak=" . $primaryConsecutiveDownCount);
+
+    :if ($primaryConsecutiveDownCount < $primaryConsecutiveDownThreshold) do={
+        :log warning ("primary_failover_decider: debounce active, waiting for " . ($primaryConsecutiveDownThreshold - $primaryConsecutiveDownCount) . " more DOWN result(s)");
+        :return true;
+    };
 
     :log error "PRIMARY interface considered DOWN. Performing failover.";
 
@@ -50,6 +68,8 @@
 };
 
 :if ($primaryState = "UP") do={
+
+    :set primaryConsecutiveDownCount 0;
 
     :log warning "PRIMARY interface considered UP. Restoring primary routes.";
 

@@ -18,7 +18,7 @@ This is the practical RouterOS approach, because connection marks are stored in 
 
 ## Expected variables
 
-The script expects these global variables to exist:
+The script expects these global variables to exist at runtime:
 
 ```routeros
 :global primaryState;
@@ -29,9 +29,14 @@ The script expects these global variables to exist:
 :global gotifyState;
 ```
 
+If you use that pattern, Netwatch only needs to set `primaryState` before calling the script.
+
 Typical Netwatch usage:
 
 ```routeros
+# Optional debounce tuning
+:global primaryConsecutiveDownThreshold 3;
+
 # DOWN script
 :log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
 :global primaryState "DOWN";
@@ -41,6 +46,19 @@ Typical Netwatch usage:
 :log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
 :global primaryState "UP";
 /system script run primary_failover_decider;
+```
+
+Debounce behavior:
+
+- The script now requires `primaryConsecutiveDownThreshold` consecutive `DOWN` results before it actually disables the primary route.
+- The default threshold is `2` if the variable is not set.
+- The first `DOWN` is treated as a transient and only increments the internal streak counter.
+- Any `UP` result resets the DOWN streak.
+
+To tune it, define a global before calling the script:
+
+```routeros
+:global primaryConsecutiveDownThreshold 3;
 ```
 
 For ICMP Netwatch checks, the telemetry fields above are the useful ones to log. The exact values available depend on probe type, but `rtt-avg`, `rtt-min`, `rtt-max`, and `packet-loss` are the main ones for path quality debugging.
