@@ -25,7 +25,13 @@
     # Remove only connections using primary (via-bestgo)
     :local conns [/ip firewall connection find where connection-mark=via-bestgo];
     :if ([:len $conns] > 0) do={
-        /ip firewall connection remove $conns;
+        :foreach conn in=$conns do={
+            :do {
+                /ip firewall connection remove $conn;
+            } on-error={
+                :log debug "primary_failover_decider: connection $conn already gone, skipping";
+            };
+        };
     }
 
     :set gotifyState $primaryState;
