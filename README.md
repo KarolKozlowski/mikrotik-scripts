@@ -1,20 +1,8 @@
 # mikrotik-scripts
 
-## init_defaults.rsc
+## primary_failover_decider.rsc
 
-Boot-time defaults for the scripts in this repository.
-
-Use this when you want stable defaults for shared variables without repeating them in each script:
-
-- `gotifySource`
-- `gotifyService`
-- `primaryConsecutiveDownThreshold`
-- `primaryConsecutiveDownCount`
-- `warnhc`
-- `warnkuma`
-- `warninet`
-
-The companion file [init_defaults.md](init_defaults.md) explains the startup scheduler pattern and which values are intentionally left runtime-only.
+WAN failover script with debounced failover logic. See [primary_failover_decider.md](primary_failover_decider.md) for usage.
 
 ## add_vlan_network.rsc
 

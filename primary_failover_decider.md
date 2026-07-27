@@ -1,86 +1,164 @@
-# Failover script
+# Failover Logic
 
-This script handles WAN failover by toggling the `PRIMARY` default route in the `main` routing table based on the state reported by Netwatch. When the primary path is marked `DOWN`, it disables the route commented as `PRIMARY`; when the primary path returns `UP`, it enables that route again. The script queries the current route state to ensure idempotency, so repeated Netwatch events do not re-run the same actions unnecessarily.
+This is the main logic layer (heavy lifting) for PRIMARY failover decision-making with debounced failover logic.
 
-## Behavior
+## Architecture
 
-- Uses `primaryState` as the current desired state, typically set by Netwatch.
-- Disables `/ip route` entries with `comment="PRIMARY"` when the primary uplink is down.
-- Re-enables `/ip route` entries with `comment="PRIMARY"` when the primary uplink is back.
-- Removes only connection-tracking entries marked as using the primary WAN, for example `connection-mark=via-bestgo`, so existing failover traffic is left alone [web:121].
-- Triggers optional helper scripts such as `beep_primary_down`, `beep_primary_up`, and `gotify` for alerting and notifications.
+**Two-layer design:**
 
-## Why connection marks are used
+- **Inline test-script** (embedded in Netwatch probe) — Captures Netwatch variables (`$since` timestamp, `$status`, ICMP metrics), calculates elapsed seconds, sets globals
+- **`primary_failover_decider.rsc`** (this file, logic layer) — Receives telemetry as globals, decides failover/restore, executes actions
 
-Existing sessions do not automatically migrate to another WAN after a route change, because connection tracking keeps them tied to the path they were established on. To avoid flushing all connections, the router marks new sessions by egress WAN, such as `via-bestgo` for primary and `via-neostrada` for backup, and the failover script removes only the sessions that were using the failed primary link.
+## How it works
 
-This is the practical RouterOS approach, because connection marks are stored in conntrack and can be matched later for selective removal, unlike routing marks which are used before route lookup and are not directly usable for conntrack cleanup.
+1. Netwatch probes the PRIMARY endpoint at regular intervals (e.g., every 2 seconds)
+2. After each probe, Netwatch executes the **inline test-script**
+3. Inline script:
+   - Captures Netwatch variables: `$since` (datetime), `$status`, ICMP metrics
+   - **Calculates elapsed seconds** from the `$since` timestamp to current time
+   - Sets globals: `primaryElapsedSeconds`, `primaryStatus`, `primaryRttAvg`, etc.
+   - Calls `/system script run primary_failover_decider`
+4. Main logic script receives telemetry as globals, queries actual route state, decides failover/restore
 
 ## Expected variables
 
-The script expects this global variable at runtime:
+This script expects the inline test-script to set these globals:
 
 ```routeros
-:global primaryState;
+:global primaryDebounceSeconds;     # Required: Debounce threshold in seconds (e.g., 5)
+:global primaryElapsedSeconds;      # Set by inline script: calculated seconds since status change
+:global primaryStatus;              # Set by inline script: "ok" or "fail"
+:global primaryRttAvg;              # Set by inline script: ICMP RTT average (e.g., "10ms")
+:global primaryRttMax;              # Set by inline script: ICMP RTT maximum (e.g., "15ms")
+:global primaryThresholdLoss;       # Set by inline script: packet loss percentage (e.g., "0")
 
-:global gotifySource;
-:global gotifyService;
-:global gotifyState;
+:global gotifySource;               # Optional: hostname for gotify notifications
+:global gotifyService;              # Optional: service name for notifications
+:global gotifyState;                # Set by script for notifications
 ```
 
-The script derives the current state of the primary route directly from the router configuration, so no persistent state tracking is needed. Netwatch only needs to set `primaryState` before calling the script.
+## Setup
 
-Typical Netwatch usage:
+### 1. Set debounce parameter globally
 
 ```routeros
-# Optional debounce tuning
-:global primaryConsecutiveDownThreshold 3;
+:global primaryDebounceSeconds 5;
+```
 
-# DOWN script
-:log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
-:global primaryState "DOWN";
+### 2. Create Netwatch probe with embedded inline test-script
+
+The test-script must be embedded directly in the Netwatch configuration (NOT a separate script file).
+
+**Use WinBox GUI (easiest):**
+
+1. Go to **Tools → Netwatch**
+2. Create new or edit the PRIMARY-watch probe
+3. In the **test-script** field, copy and paste the entire script content from `primary_failover_netwatch_inline.rsc` (lines between BEGIN and END markers)
+4. Click OK
+
+**Or use command line:**
+
+First, open the `primary_failover_netwatch_inline.rsc` file and copy the entire script (between BEGIN and END markers). Then set it in Netwatch:
+
+```routeros
+/tool/netwatch set PRIMARY-watch test-script="[paste the entire script content here]"
+```
+
+## Connection mark cleanup
+
+Removes only connections using the primary WAN (e.g., `connection-mark=via-bestgo`), leaving backup traffic intact.
+
+## Debounce behavior
+
+- Debounce period: configured via global `primaryDebounceSeconds` (must be set before script invocation)
+- Netwatch runs probes every N seconds (e.g., 2s in the setup example)
+- `primaryElapsedSeconds` = seconds since PRIMARY status last changed (calculated by inline script)
+- When PRIMARY DOWN and `elapsed < threshold`: logs SETTLE telemetry with ICMP metrics (rtt-avg, rtt-max, loss)
+- When PRIMARY DOWN and `elapsed >= threshold`: triggers failover
+- When PRIMARY UP: restores routes, flushes all conntrack
+
+Example scenario with 5s debounce and 2s probe interval:
+
+- T=0: Netwatch detects PRIMARY down → inline script calculates elapsed=0 → SETTLE logs with rtt-avg, rtt-max, loss
+- T=2: Next probe → inline script calculates elapsed=2 → SETTLE logs
+- T=4: Next probe → inline script calculates elapsed=4 → SETTLE logs
+- T=6: Next probe → inline script calculates elapsed=6 → debounce expires → failover triggers
+
+## Testing
+
+Manually trigger to observe debounce behavior by setting globals and calling the logic script:
+
+```routeros
+# Set required parameters
+:global primaryDebounceSeconds 5;
+:global gotifySource "test.local";
+:global gotifyService "Test";
+
+# Disable the PRIMARY route to simulate failure
+/ip route disable [find comment="PRIMARY"]
+
+# Simulate first Netwatch probe (elapsed=0, just went DOWN)
+:global primaryElapsedSeconds 0;
+:global primaryStatus "fail";
+:global primaryRttAvg "150ms";
+:global primaryRttMax "200ms";
+:global primaryThresholdLoss "0";
 /system script run primary_failover_decider;
+# Expected log: "SETTLE status=fail elapsed=0s rtt-avg=150ms rtt-max=200ms loss=0% waiting=5s"
 
-# UP script
-:log info ("netwatch telemetry: host=" . $host . " status=" . $status . " rtt-avg=" . $"rtt-avg" . " rtt-min=" . $"rtt-min" . " rtt-max=" . $"rtt-max" . " packet-loss=" . $"packet-loss");
-:global primaryState "UP";
+# Simulate second probe (elapsed=5, debounce expired)
+:global primaryElapsedSeconds 5;
 /system script run primary_failover_decider;
+# Expected log: "PRIMARY interface considered DOWN. Performing failover."
+
+# Re-enable PRIMARY route
+/ip route enable [find comment="PRIMARY"]
+
+# Simulate probe showing PRIMARY UP
+:global primaryElapsedSeconds 0;
+:global primaryStatus "ok";
+:global primaryRttAvg "10ms";
+:global primaryRttMax "15ms";
+:global primaryThresholdLoss "0";
+/system script run primary_failover_decider;
+# Expected log: "PRIMARY interface considered UP. Restoring primary routes."
 ```
-
-Debounce behavior:
-
-- The script now requires `primaryConsecutiveDownThreshold` consecutive `DOWN` results before it actually disables the primary route.
-- The default threshold is `2` if the variable is not set.
-- The first `DOWN` is treated as a transient and only increments the internal streak counter.
-- Any `UP` result resets the DOWN streak.
-
-To tune it, define a global before calling the script:
-
-```routeros
-:global primaryConsecutiveDownThreshold 3;
-```
-
-For ICMP Netwatch checks, the telemetry fields above are the useful ones to log. The exact values available depend on probe type, but `rtt-avg`, `rtt-min`, `rtt-max`, and `packet-loss` are the main ones for path quality debugging.
 
 ## Requirements
 
-- A static default route in `main` with `comment="PRIMARY"`.
-- Connection-marking rules that mark new sessions by WAN, for example:
-  - `via-bestgo` for the primary uplink.
-  - `via-neostrada` for the backup uplink.
-- Optional notification scripts if you want sound or push alerts.
+- A static default route in `main` with `comment="PRIMARY"`
+- Connection-marking rules that mark new sessions by WAN:
+  - `via-bestgo` for the primary uplink
+  - `via-neostrada` for the backup uplink
+- Optional notification scripts: `beep_primary_down`, `beep_primary_up`, `gotify`
 
-Example selective cleanup:
+## Telemetry
 
-```routeros
-:local conns [/ip firewall connection find where connection-mark=via-bestgo];
-:if ([:len $conns] > 0) do={
-    /ip firewall connection remove $conns;
-}
+The script logs different types of messages at different frequencies:
+
+- **Telemetry status line** (current_state, elapsed, debounce) — Logged **once per 60 seconds** to reduce noise
+- **SETTLE logs** (during debounce wait) — Logged on every probe (every 2-5 seconds)
+- **Action logs** (failover, restore) — Logged on state transition (once per DOWN→UP or UP→DOWN)
+- **Connection cleanup logs** — Logged per action (once per failover/restore)
+
+Example output showing 60-second telemetry throttling:
+
+```log
+2026-07-27 15:27:13 script,info primary_failover telemetry: current_state=DOWN elapsed=0s debounce=5s
+2026-07-27 15:27:13 script,warning primary_failover: PRIMARY DOWN, elapsed=0s
+2026-07-27 15:27:13 script,warning primary_failover: SETTLE status=fail elapsed=0s rtt-avg=150ms rtt-max=200ms loss=0% waiting=5s
+
+2026-07-27 15:27:15 script,warning primary_failover: SETTLE status=fail elapsed=2s rtt-avg=160ms rtt-max=210ms loss=0% waiting=3s
+
+2026-07-27 15:27:17 script,warning primary_failover: SETTLE status=fail elapsed=4s rtt-avg=160ms rtt-max=210ms loss=0% waiting=1s
+
+2026-07-27 15:27:19 script,error PRIMARY interface considered DOWN. Performing failover.
+2026-07-27 15:27:19 script,info primary_failover telemetry: failover_conntrack_marked=150
+2026-07-27 15:27:20 script,info primary_failover telemetry: failover_conntrack_removed=150
+
+[Later, at T+60s, telemetry line logs again]
+2026-07-27 15:28:13 script,info primary_failover telemetry: current_state=DOWN elapsed=60s debounce=5s
+2026-07-27 15:28:13 script,info primary_failover telemetry: failover_conntrack_marked=45
+
+[More SETTLE logs every 2s, but no telemetry line until 60s later]
 ```
-
-## Notes
-
-- The script is idempotent: if the requested state is already applied, it exits without doing anything.
-- Selective conntrack cleanup is preferred over `/ip firewall connection remove [find]`, because it preserves unaffected sessions.
-- If no matching connections exist, guard the `remove` command with `[:len ...] > 0` to avoid `no such item` errors in Netwatch logs.

@@ -1,113 +1,134 @@
-:global primaryState;
-
 :global gotifySource "np.dotnot.pl";
 :global gotifyService "BestGo";
 :global gotifyState;
-:global primaryConsecutiveDownCount;
-:global primaryConsecutiveDownThreshold;
+:global primaryDebounceSeconds;
+:global primaryDebug;  # Inherited from netwatch inline script, defaults to false
 
-:if ([:typeof $primaryConsecutiveDownCount] = "nil") do={
-    :set primaryConsecutiveDownCount 0;
+# Globals set by netwatch inline test-script
+:global primaryElapsedSeconds;  # Calculated elapsed seconds since status change
+:global primaryStatus;
+:global primaryRttAvg;
+:global primaryRttMax;
+:global primaryThresholdLoss;
+
+# If variables not provided (manual testing), assume defaults
+:if ([:typeof $primaryElapsedSeconds] = "nothing") do={
+    :set primaryElapsedSeconds 0;
+};
+:if ([:typeof $primaryStatus] = "nothing") do={
+    :set primaryStatus "unknown";
+};
+:if ([:typeof $primaryRttAvg] = "nothing") do={
+    :set primaryRttAvg "0ms";
+};
+:if ([:typeof $primaryRttMax] = "nothing") do={
+    :set primaryRttMax "0ms";
+};
+:if ([:typeof $primaryThresholdLoss] = "nothing") do={
+    :set primaryThresholdLoss "0";
+};
+:if ([:typeof $primaryDebug] = "nothing") do={
+    :set primaryDebug false;
 };
 
-:if ([:typeof $primaryConsecutiveDownThreshold] = "nil") do={
-    :set primaryConsecutiveDownThreshold 2;
-};
-
-# Query the current state of the PRIMARY route
+# Get current state: route enabled/disabled
 :local primaryRoute [/ip route find comment="PRIMARY"];
-:local currentState "UNKNOWN";
-:if ([:len $primaryRoute] > 0) do={
-    :local routeDisabled [/ip route get [/ip route find comment="PRIMARY"] disabled];
-    :if ($routeDisabled = true) do={
-        :set currentState "DOWN";
-    } else={
-        :set currentState "UP";
-    };
+:if ([:len $primaryRoute] = 0) do={
+    :log error "primary_failover: PRIMARY route not found! Check route exists with comment='PRIMARY'";
+    :return false;
+};
+:local routeDisabled [/ip route get $primaryRoute disabled];
+:local currentState "DISABLED";
+:if ($routeDisabled = false) do={
+    :set currentState "ENABLED";
 };
 
-:log info ("primary_failover_decider telemetry: desired_state=" . $primaryState . " current_state=" . $currentState);
+# Get desired state from netwatch status
+:local desiredState "DISABLED";
+:if ($primaryStatus = "up") do={
+    :set desiredState "ENABLED";
+};
 
-# If the route is already in the desired state, skip
-:if ($currentState = $primaryState) do={
-    :log debug ("primary_failover_decider: route already " . $primaryState . ", skipping");
+:if ($primaryDebug = true) do={
+    :log info ("primary_failover_decider: primaryStatus=" . $primaryStatus . " (comparing to 'up')");
+    :log info ("primary_failover telemetry: current_state=" . $currentState . " desired_state=" . $desiredState . " elapsed=" . $primaryElapsedSeconds . "s debounce=" . $primaryDebounceSeconds . "s");
+};
+
+# If states match, nothing to do
+:if ($currentState = $desiredState) do={
     :return true;
 };
 
-:if ($primaryState = "DOWN") do={
+# States don't match - wait for debounce period
+:if ($primaryElapsedSeconds < $primaryDebounceSeconds) do={
+    :log warning ("primary_failover: SETTLE status=" . $primaryStatus . " elapsed=" . $primaryElapsedSeconds . "s rtt-avg=" . $primaryRttAvg . " rtt-max=" . $primaryRttMax . " loss=" . $primaryThresholdLoss . "% waiting=" . ($primaryDebounceSeconds - $primaryElapsedSeconds) . "s");
+    :return true;
+};
 
-    :set primaryConsecutiveDownCount ($primaryConsecutiveDownCount + 1);
-    :log info ("primary_failover_decider telemetry: down_streak=" . $primaryConsecutiveDownCount);
-
-    :if ($primaryConsecutiveDownCount < $primaryConsecutiveDownThreshold) do={
-        :log warning ("primary_failover_decider: debounce active, waiting for " . ($primaryConsecutiveDownThreshold - $primaryConsecutiveDownCount) . " more DOWN result(s)");
-        :return true;
-    };
-
-    :log error "PRIMARY interface considered DOWN. Performing failover.";
+# Debounce expired - flip the route
+:if ($desiredState = "DISABLED") do={
+    :log error "PRIMARY interface DOWN. Disabling route and failing over.";
 
     /system script run beep_primary_down;
 
-    # Disable primary route in main by comment
-    /ip route disable [/ip route find comment="PRIMARY"];
+    # Disable primary route
+    /ip route disable $primaryRoute;
 
     # Remove only connections using primary (via-bestgo)
     :local conns [/ip firewall connection find where connection-mark=via-bestgo];
-    :log info ("primary_failover_decider telemetry: failover_conntrack_marked=" . [:len $conns]);
     :if ([:len $conns] > 0) do={
-        :local removedCount 0;
         :foreach conn in=$conns do={
             :do {
                 /ip firewall connection remove $conn;
-                :set removedCount ($removedCount + 1);
             } on-error={
                 :log debug "primary_failover_decider: connection $conn already gone, skipping";
             };
         };
-        :log info ("primary_failover_decider telemetry: failover_conntrack_removed=" . $removedCount);
     }
 
-    :set gotifyState $primaryState;
+    :set gotifyState "DOWN";
     :delay 1000ms;
-    :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
     /system script run gotify;
-
-    :return true;
 };
 
-:if ($primaryState = "UP") do={
-
-    :set primaryConsecutiveDownCount 0;
-
-    :log warning "PRIMARY interface considered UP. Restoring primary routes.";
+:if ($desiredState = "ENABLED") do={
+    :log warning "PRIMARY interface UP. Enabling route and restoring.";
 
     /system script run beep_primary_up;
 
-    # Enable primary route in main by comment
-    /ip route enable [/ip route find comment="PRIMARY"];
+    # Enable primary route
+    /ip route enable $primaryRoute;
 
     # Flush conntrack on restore so VPN/NAT sessions re-establish on primary
     :local restoreConns [/ip firewall connection find];
-    :log info ("primary_failover_decider telemetry: restore_conntrack_total=" . [:len $restoreConns]);
     :if ([:len $restoreConns] > 0) do={
-        :local restoreRemovedCount 0;
         :foreach conn in=$restoreConns do={
             :do {
                 /ip firewall connection remove $conn;
-                :set restoreRemovedCount ($restoreRemovedCount + 1);
             } on-error={
                 :log debug "primary_failover_decider: restore conn $conn already gone, skipping";
             };
         };
-        :log info ("primary_failover_decider telemetry: restore_conntrack_removed=" . $restoreRemovedCount);
     }
 
-    :set gotifyState $primaryState;
-    :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
+    :set gotifyState "UP";
+    :delay 1000ms;
     /system script run gotify;
-
-    :return true;
 };
 
-:log warning "primary_failover_decider: unknown primaryState '$primaryState'";
-:return false;
+# === ARCHITECTURE ===
+# This script is the logic layer (heavy lifting).
+# It expects these globals to be set by the caller (primary_failover_netwatch wrapper):
+#   $primaryElapsedSeconds (calculated elapsed seconds, not raw timestamp)
+#   $primaryStatus, $primaryRttAvg, $primaryRttMax, $primaryThresholdLoss
+#
+# For Netwatch integration, embed the test-script inline (see primary_failover_decider.md)
+#
+# For manual testing, set globals and run directly:
+#   :global primaryDebounceSeconds 5;
+#   :global primaryElapsedSeconds 2;
+#   :global primaryStatus "fail";
+#   :global primaryRttAvg "100ms";
+#   :global primaryRttMax "150ms";
+#   :global primaryThresholdLoss "0";
+#   /system script run primary_failover_decider;
