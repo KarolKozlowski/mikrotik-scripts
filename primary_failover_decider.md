@@ -1,6 +1,6 @@
 # Failover script
 
-This script handles WAN failover by toggling the `PRIMARY` default route in the `main` routing table based on the state reported by Netwatch. When the primary path is marked `DOWN`, it disables the route commented as `PRIMARY`; when the primary path returns `UP`, it enables that route again. The script also keeps track of the last applied state in `primaryAppliedState` so repeated Netwatch events do not re-run the same actions unnecessarily [web:126].
+This script handles WAN failover by toggling the `PRIMARY` default route in the `main` routing table based on the state reported by Netwatch. When the primary path is marked `DOWN`, it disables the route commented as `PRIMARY`; when the primary path returns `UP`, it enables that route again. The script queries the current route state to ensure idempotency, so repeated Netwatch events do not re-run the same actions unnecessarily.
 
 ## Behavior
 
@@ -18,28 +18,17 @@ This is the practical RouterOS approach, because connection marks are stored in 
 
 ## Expected variables
 
-The script expects these global variables to exist at runtime:
+The script expects this global variable at runtime:
 
 ```routeros
 :global primaryState;
-:global primaryAppliedState;
 
 :global gotifySource;
 :global gotifyService;
 :global gotifyState;
 ```
 
-RouterOS globals are not persistent across reboot, so the usual pattern is to set long-lived defaults from a startup scheduler and let Netwatch provide the per-event state:
-
-```routeros
-/system scheduler add name=primary-failover-init start-time=startup on-event="\
-:global primaryConsecutiveDownThreshold 3;\
-:global primaryAppliedState;\
-:global primaryConsecutiveDownCount 0;\
-"
-```
-
-If you use that pattern, Netwatch only needs to set `primaryState` before calling the script.
+The script derives the current state of the primary route directly from the router configuration, so no persistent state tracking is needed. Netwatch only needs to set `primaryState` before calling the script.
 
 Typical Netwatch usage:
 

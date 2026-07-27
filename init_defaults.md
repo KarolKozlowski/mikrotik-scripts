@@ -17,8 +17,9 @@ This script sets the long-lived defaults used by the RouterOS scripts in this re
 These remain runtime variables and are set by the scripts that use them:
 
 - `primaryState`
-- `primaryAppliedState`
 - `gotifyState`
+
+The failover script derives the current primary route state directly from the route configuration, so no persistent state tracking is needed.
 
 ## How to use
 

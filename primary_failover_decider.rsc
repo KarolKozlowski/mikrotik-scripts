@@ -1,5 +1,4 @@
 :global primaryState;
-:global primaryAppliedState;
 
 :global gotifySource "np.dotnot.pl";
 :global gotifyService "BestGo";
@@ -15,14 +14,24 @@
     :set primaryConsecutiveDownThreshold 2;
 };
 
-:log info ("primary_failover_decider telemetry: state=" . $primaryState . " applied=" . $primaryAppliedState);
-
-# If we already applied this state, skip
-:if ([:typeof $primaryAppliedState] != "nil") do={
-    :if ($primaryAppliedState = $primaryState) do={
-        :log debug "primary_failover_decider: state $primaryState already applied, skipping";
-        :return true;
+# Query the current state of the PRIMARY route
+:local primaryRoute [/ip route find comment="PRIMARY"];
+:local currentState "UNKNOWN";
+:if ([:len $primaryRoute] > 0) do={
+    :local routeDisabled [/ip route get [/ip route find comment="PRIMARY"] disabled];
+    :if ($routeDisabled = true) do={
+        :set currentState "DOWN";
+    } else={
+        :set currentState "UP";
     };
+};
+
+:log info ("primary_failover_decider telemetry: desired_state=" . $primaryState . " current_state=" . $currentState);
+
+# If the route is already in the desired state, skip
+:if ($currentState = $primaryState) do={
+    :log debug ("primary_failover_decider: route already " . $primaryState . ", skipping");
+    :return true;
 };
 
 :if ($primaryState = "DOWN") do={
@@ -63,7 +72,6 @@
     :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
     /system script run gotify;
 
-    :set primaryAppliedState "DOWN";
     :return true;
 };
 
@@ -98,7 +106,6 @@
     :log info ("primary_failover_decider telemetry: gotify_state=" . $gotifyState);
     /system script run gotify;
 
-    :set primaryAppliedState "UP";
     :return true;
 };
 
