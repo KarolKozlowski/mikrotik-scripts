@@ -60,7 +60,11 @@
             :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
             :if ([:len $recByName] > 0) do={
                 :log info ("DHCP-DNS: removing old DHCP DNS record by name for " . $fqdn);
-                /ip dns static remove $recByName;
+                :do {
+                    /ip dns static remove $recByName;
+                } on-error={
+                    :log warning ("DHCP-DNS: record(s) by name already removed for " . $fqdn);
+                }
             } else={
                 :log info ("DHCP-DNS: no old DHCP DNS record by name for " . $fqdn);
             }
@@ -69,7 +73,11 @@
             :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
             :if ([:len $recByAddr] > 0) do={
                 :log info ("DHCP-DNS: removing old DHCP DNS record by address for " . $"g-leaseActIP");
-                /ip dns static remove $recByAddr;
+                :do {
+                    /ip dns static remove $recByAddr;
+                } on-error={
+                    :log warning ("DHCP-DNS: record(s) by address already removed for " . $"g-leaseActIP");
+                }
             } else={
                 :log info ("DHCP-DNS: no old DHCP DNS record by address for " . $"g-leaseActIP");
             }
@@ -82,10 +90,18 @@
                       " -> " . $"g-leaseActIP" . \
                       " comment=\"" . $dnsComment . "\"");
 
-            /ip dns static add name=$fqdn address=$"g-leaseActIP" \
-                comment=$dnsComment disabled=no;
-
-            :log info ("DHCP-DNS: created DNS record for " . $fqdn);
+            :local existingByName [/ip dns static find where name=$fqdn];
+            :if ([:len $existingByName] > 0) do={
+                :log warning ("DHCP-DNS: DNS name already exists for " . $fqdn . ", skipping add");
+            } else={
+                :do {
+                    /ip dns static add name=$fqdn address=$"g-leaseActIP" \
+                        comment=$dnsComment disabled=no;
+                    :log info ("DHCP-DNS: created DNS record for " . $fqdn);
+                } on-error={
+                    :log warning ("DHCP-DNS: failed to add DNS record for " . $fqdn . ", likely already exists");
+                }
+            }
 
         } else={
 
@@ -94,7 +110,11 @@
             :local recByName [/ip dns static find where name=$fqdn and comment~"DHCP lease for"];
             :if ([:len $recByName] > 0) do={
                 :log info ("DHCP-DNS: removing DHCP DNS record by name for " . $fqdn);
-                /ip dns static remove $recByName;
+                :do {
+                    /ip dns static remove $recByName;
+                } on-error={
+                    :log warning ("DHCP-DNS: record(s) by name already removed for " . $fqdn);
+                }
             } else={
                 :log info ("DHCP-DNS: no DHCP DNS record by name to remove for " . $fqdn);
             }
@@ -102,7 +122,11 @@
             :local recByAddr [/ip dns static find where address=$"g-leaseActIP" and comment~"DHCP lease for"];
             :if ([:len $recByAddr] > 0) do={
                 :log info ("DHCP-DNS: removing DHCP DNS record by address for " . $"g-leaseActIP");
-                /ip dns static remove $recByAddr;
+                :do {
+                    /ip dns static remove $recByAddr;
+                } on-error={
+                    :log warning ("DHCP-DNS: record(s) by address already removed for " . $"g-leaseActIP");
+                }
             } else={
                 :log info ("DHCP-DNS: no DHCP DNS record by address to remove for " . $"g-leaseActIP");
             }
